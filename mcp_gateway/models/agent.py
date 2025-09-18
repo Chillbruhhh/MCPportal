@@ -210,6 +210,10 @@ class MCPServerWithHealth(MCPServer):
     """MCP server with health information"""
     tools_count: int = Field(..., description="Number of available tools")
     last_error: Optional[str] = Field(None, description="Last error message")
+    tool_permissions: Dict[str, bool] = Field(
+        default_factory=dict,
+        description="Stack-specific tool enablement toggles"
+    )
 
 
 class MCPStackWithServers(MCPStack):

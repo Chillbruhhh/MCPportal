@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
   useEffect,
+  useMemo,
 } from 'react'
 import {
   ReactFlow,
@@ -39,7 +40,7 @@ import { useServers } from '@/hooks/useServers'
 import { useDashboardWebSocket } from '@/hooks/useWebSocket'
 import { useStackFormation } from '@/hooks/useStackFormation'
 import { StackFormationAnimation, ServerMergeZone } from '@/components/graph/StackFormationAnimation'
-import { StackDetailsModal } from '@/components/modals/StackDetailsModal'
+import StackServerInspector from '@/components/graph/StackServerInspector'
 import { useGraphState, type SaveOptions } from '@/components/providers/GraphStateProvider'
 import { normalizeApiResponse, validateServer, validateAgent, validateStack } from '@/lib/validation'
 import type { Agent, MCPStack, MCPServer } from '@/lib/api'
@@ -164,12 +165,14 @@ interface ContextMenuState {
 
 export interface HubViewHandle {
   addServer: (server: MCPServer) => void
+  addServerById: (serverId: string) => void
 }
 
 export default forwardRef<HubViewHandle, Record<string, never>>(function HubView(_, ref) {
   const reactFlowInstance = useReactFlow()
   const agentY = useRef(100)
   const serverY = useRef(100)
+  const dataSignatureRef = useRef<string | null>(null)
   const [isInitialized, setIsInitialized] = useState(false)
   const { save: persistGraphState, load: retrieveGraphState } = useGraphState()
 
@@ -178,10 +181,40 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
 
   // API data
-  const { data: agents } = useAgents()
-  const { data: stacks } = useStacks()
-  const { data: servers } = useServers()
+  const { agents } = useAgents()
+  const { stacks } = useStacks()
+  const { servers } = useServers()
   const { selectedServerIds } = useDashboardWebSocket()
+
+  const safeAgents = useMemo(() => normalizeApiResponse(agents, validateAgent), [agents])
+  const safeStacks = useMemo(() => normalizeApiResponse(stacks, validateStack), [stacks])
+  const allSafeServers = useMemo(() => normalizeApiResponse(servers, validateServer), [servers])
+
+  const dataSignature = useMemo(() => {
+    return JSON.stringify({
+      agents: safeAgents.map(agent => ({
+        id: agent.id,
+        name: agent.name,
+        status: agent.status,
+        assignedStackId: agent.assigned_stack_id,
+        updatedAt: agent.updated_at,
+      })),
+      stacks: safeStacks.map(stack => ({
+        id: stack.id,
+        name: stack.name,
+        isActive: stack.is_active,
+        updatedAt: stack.updated_at,
+        serverIds: (stack.servers ?? []).map(server => String(server.id ?? server.name ?? 'unknown')),
+      })),
+      servers: allSafeServers.map(server => ({
+        id: server.id,
+        name: server.name,
+        status: server.health_status,
+        updatedAt: server.updated_at,
+        toolPermissions: server.tool_permissions,
+      })),
+    })
+  }, [safeAgents, safeStacks, allSafeServers])
 
   // Stack formation
   const { stackFormation, isForming, result } = useStackFormation()
@@ -190,6 +223,7 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
   // UI state
   const [menu, setMenu] = useState<ContextMenuState>({ open: false, x: 0, y: 0 })
   const [selectedNode, setSelectedNode] = useState<TypedNode | null>(null)
+  const [activeStackId, setActiveStackId] = useState<string | null>(null)
 
   // Save state to storage using the GraphStateProvider context
   const saveState = useCallback(
@@ -218,6 +252,27 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
     [persistGraphState, reactFlowInstance, selectedServerIds]
   )
 
+  // Shared helpers for ID/slug generation
+  const slugify = useCallback(
+    (value?: string) =>
+      (value || 'unknown')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)+/g, ''),
+    []
+  )
+
+  const ensureUniqueId = useCallback((base: string, used: Set<string>) => {
+    if (!used.has(base)) return base
+    let i = 2
+    let next = `${base}-${i}`
+    while (used.has(next)) {
+      i += 1
+      next = `${base}-${i}`
+    }
+    return next
+  }, [])
+
   // Load state from storage using the GraphStateProvider context
   const loadState = useCallback(() => {
     try {
@@ -245,7 +300,7 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
             try {
               reactFlowInstance.setViewport(parsedState.viewport, { duration: 200 })
             } catch (error) {
-              console.warn('Viewport restoration failed, using fitView fallback')
+              console.warn('Viewport restoration failed, using fitView fallback', error)
               reactFlowInstance.fitView({ padding: 0.2, duration: 300 })
             }
           }, 100)
@@ -260,44 +315,62 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
     return false
   }, [retrieveGraphState, setEdges, setNodes, reactFlowInstance])
 
+  const activeStack = useMemo(() => {
+    if (!activeStackId) return null
+    const stackList = Array.isArray(stacks) ? stacks : []
+    return stackList.find((stack) => String(stack.id) === activeStackId) ?? null
+  }, [activeStackId, stacks])
+
+  useEffect(() => {
+    if (activeStackId && !activeStack) {
+      setActiveStackId(null)
+    }
+  }, [activeStackId, activeStack])
+
   // Convert backend data to flow nodes and edges
   const convertDataToFlow = useCallback(() => {
-    if (!agents && !stacks && !servers) return
+    if (!safeAgents.length && !safeStacks.length && !allSafeServers.length) {
+      if (nodes.length || edges.length) {
+        agentY.current = 100
+        serverY.current = 100
+        setNodes([])
+        setEdges([])
+        saveState()
+      }
+      dataSignatureRef.current = dataSignature
+      return
+    }
+
+    if (dataSignatureRef.current === dataSignature) {
+      return
+    }
+
+    dataSignatureRef.current = dataSignature
 
     console.log('\n🔄 Converting backend data to flow elements')
 
-    // Helper functions
-    const slug = (s?: string) =>
-      (s || 'unknown')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/(^-|-$)+/g, '')
-
-    const ensureUnique = (base: string, used: Set<string>) => {
-      if (!used.has(base)) return base
-      let i = 2
-      let next = `${base}-${i}`
-      while (used.has(next)) {
-        i += 1
-        next = `${base}-${i}`
-      }
-      return next
-    }
-
-    // Normalize and validate API responses
-    const safeAgents = normalizeApiResponse(agents, validateAgent)
-    const safeStacks = normalizeApiResponse(stacks, validateStack)
-    const allSafeServers = normalizeApiResponse(servers, validateServer)
+    agentY.current = 100
+    serverY.current = 100
 
     const newNodes: TypedNode[] = []
     const newEdges: Edge[] = []
     const usedIds = new Set<string>()
+    const agentNodeMap = new Map<string, string>()
+    const stackNodeMap = new Map<string, string>()
 
-    // Create agent nodes
+    const registerKeys = (map: Map<string, string>, keys: Array<string | null | undefined>, value: string) => {
+      keys.forEach((key) => {
+        if (!key) return
+        map.set(typeof key === 'string' ? key : String(key), value)
+      })
+    }
+
     safeAgents.forEach((agent) => {
-      const baseId = `agent-${slug(agent.name)}`
-      const id = ensureUnique(baseId, usedIds)
+      const baseId = `agent-${slugify(agent.name)}`
+      const id = ensureUniqueId(baseId, usedIds)
       usedIds.add(id)
+
+      registerKeys(agentNodeMap, [agent.id, baseId], id)
 
       newNodes.push({
         id,
@@ -312,16 +385,17 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
       agentY.current += 120
     })
 
-    // Create stack nodes
-    safeStacks.forEach((stack) => {
-      const baseId = `stack-${slug(stack.name)}`
-      const id = ensureUnique(baseId, usedIds)
+    safeStacks.forEach((stack, index) => {
+      const baseId = `stack-${slugify(stack.name)}`
+      const id = ensureUniqueId(baseId, usedIds)
       usedIds.add(id)
+
+      registerKeys(stackNodeMap, [stack.id, baseId], id)
 
       newNodes.push({
         id,
         type: 'stack',
-        position: { x: 300, y: 50 + safeStacks.indexOf(stack) * 120 },
+        position: { x: 300, y: 50 + index * 120 },
         data: {
           label: stack.name,
           subtitle: `${stack.servers?.length || 0} servers`,
@@ -330,71 +404,48 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
       })
     })
 
-    // Create server nodes
-    allSafeServers.forEach((server) => {
-      const baseId = `server-${slug(server.name)}`
-      const id = ensureUnique(baseId, usedIds)
-      usedIds.add(id)
-
-      newNodes.push({
-        id,
-        type: 'server',
-        position: { x: 550, y: serverY.current },
-        data: {
-          label: server.name,
-          subtitle: server.health_status || 'unknown',
-          serverData: server,
-          originalServerData: server,
-          realId: String(server.id),
-        },
-      })
-      serverY.current += 120
-    })
-
-    // Create edges between agents and stacks, stacks and servers
     safeAgents.forEach((agent) => {
-      const agentNodeId = `agent-${slug(agent.name)}`
-      safeStacks.forEach((stack) => {
-        const stackNodeId = `stack-${slug(stack.name)}`
-        newEdges.push({
-          id: `${agentNodeId}-${stackNodeId}`,
-          source: agentNodeId,
-          target: stackNodeId,
-          type: 'smoothstep',
-          markerEnd: { type: MarkerType.ArrowClosed },
-        })
-      })
-    })
+      const agentNodeId = agentNodeMap.get(agent.id ?? `agent-${slugify(agent.name)}`)
+      if (!agentNodeId) return
 
-    safeStacks.forEach((stack) => {
-      const stackNodeId = `stack-${slug(stack.name)}`
-      stack.servers?.forEach((serverRef) => {
-        const server = allSafeServers.find(s => String(s.id) === String(serverRef.id))
-        if (server) {
-          const serverNodeId = `server-${slug(server.name)}`
-          newEdges.push({
-            id: `${stackNodeId}-${serverNodeId}`,
-            source: stackNodeId,
-            target: serverNodeId,
-            type: 'smoothstep',
-            markerEnd: { type: MarkerType.ArrowClosed },
-          })
-        }
+      const assignedStackId = agent.assigned_stack_id ? String(agent.assigned_stack_id) : null
+      if (!assignedStackId) return
+
+      const stackNodeId = stackNodeMap.get(assignedStackId)
+
+      if (!stackNodeId) return
+
+      const edgeId = `${agentNodeId}-${stackNodeId}`
+      newEdges.push({
+        id: edgeId,
+        source: agentNodeId,
+        target: stackNodeId,
+        type: 'smoothstep',
+        markerEnd: { type: MarkerType.ArrowClosed },
       })
     })
 
     console.log('🔄 Generated flow elements:', {
       nodes: newNodes.length,
-      edges: newEdges.length
+      edges: newEdges.length,
     })
 
     setNodes(newNodes)
     setEdges(newEdges)
-
-    // Auto-save after data conversion
     saveState()
-
-  }, [agents, stacks, servers, setNodes, setEdges, saveState])
+  }, [
+    allSafeServers,
+    dataSignature,
+    ensureUniqueId,
+    edges.length,
+    nodes.length,
+    safeAgents,
+    safeStacks,
+    saveState,
+    setEdges,
+    setNodes,
+    slugify,
+  ])
 
   // Initialize component
   useEffect(() => {
@@ -413,10 +464,10 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
 
   // Update flow when backend data changes (but only if we have new data)
   useEffect(() => {
-    if (isInitialized && (agents || stacks || servers)) {
+    if (isInitialized) {
       convertDataToFlow()
     }
-  }, [agents, stacks, servers, isInitialized, convertDataToFlow])
+  }, [isInitialized, convertDataToFlow])
 
   // Auto-save on viewport changes
   useOnViewportChange({
@@ -483,9 +534,8 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
 
     if (!sourceNode || !targetNode) return false
 
-    // Allow agent -> stack, stack -> server
+    // Allow agent -> stack connections only
     if (sourceNode.type === 'agent' && targetNode.type === 'stack') return true
-    if (sourceNode.type === 'stack' && targetNode.type === 'server') return true
 
     return false
   }, [nodes])
@@ -496,7 +546,21 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
   }, [setEdges])
 
   const onNodeClick: NodeMouseHandler = useCallback((_, node) => {
-    setSelectedNode(node as TypedNode)
+    const typedNode = node as TypedNode
+
+    if (typedNode.type === 'stack') {
+      const stackData = typedNode.data?.stackData as MCPStack | undefined
+      const resolvedStackId =
+        (stackData?.id && String(stackData.id)) ||
+        (typedNode.data?.realId ? String(typedNode.data.realId) : null)
+
+      setActiveStackId(resolvedStackId)
+      setSelectedNode(typedNode)
+      return
+    }
+
+    setSelectedNode(typedNode)
+    setActiveStackId(null)
   }, [])
 
   const closeMenu = useCallback(() => {
@@ -504,49 +568,18 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
   }, [])
 
   // Imperative handle for parent component
-  useImperativeHandle(ref, () => ({
-    addServer: (server: MCPServer) => {
-      const baseId = `server-${slug(server.name)}`
-      const usedIds = new Set(nodes.map(n => n.id))
-      const id = ensureUnique(baseId, usedIds)
-
-      const newNode: TypedNode = {
-        id,
-        type: 'server',
-        position: { x: 550, y: serverY.current },
-        data: {
-          label: server.name,
-          subtitle: server.health_status || 'unknown',
-          serverData: server,
-          originalServerData: server,
-          realId: String(server.id),
-        },
-      }
-
-      setNodes(nds => [...nds, newNode])
-      serverY.current += 120
-    }
-  }), [nodes, setNodes])
-
-  // Helper function for unique ID generation
-  const ensureUnique = useCallback((base: string, used: Set<string>) => {
-    if (!used.has(base)) return base
-    let i = 2
-    let next = `${base}-${i}`
-    while (used.has(next)) {
-      i += 1
-      next = `${base}-${i}`
-    }
-    return next
+  const addServer = useCallback((server: MCPServer) => {
+    console.info('HubView.addServer invoked, but server nodes are managed inside stack details now.', server?.id)
   }, [])
 
-  // Helper function for slug generation
-  const slug = useCallback((s?: string) =>
-    (s || 'unknown')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)+/g, ''), []
-  )
+  const addServerById = useCallback((serverId: string) => {
+    console.info('HubView.addServerById invoked with id:', serverId)
+  }, [])
+
+  useImperativeHandle(ref, () => ({
+    addServer,
+    addServerById,
+  }))
 
   // Keyboard shortcuts
   useHotkeys('delete', () => {
@@ -650,7 +683,7 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
       )}
 
       {/* Node Details Modal */}
-      {selectedNode && (
+      {selectedNode && selectedNode.type !== 'stack' && (
         <Dialog open={!!selectedNode} onOpenChange={() => setSelectedNode(null)}>
           <DialogContent>
             <DialogHeader>
@@ -670,8 +703,12 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
         </Dialog>
       )}
 
-      {/* Stack Details Modal */}
-      <StackDetailsModal />
+      {/* Stack Inspector */}
+      <StackServerInspector
+        stack={activeStack}
+        open={!!activeStack}
+        onClose={() => setActiveStackId(null)}
+      />
     </div>
   )
 })

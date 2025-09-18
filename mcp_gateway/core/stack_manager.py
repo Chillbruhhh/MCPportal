@@ -307,45 +307,74 @@ class StackManager:
 
             # Get existing server assignments to prevent duplicates
             existing_assignments = await self.db.table('stack_server_assignments')\
-                .select('server_id')\
+                .select('id, server_id, tool_permissions')\
                 .eq('stack_id', str(stack_id))\
                 .execute()
 
-            existing_server_ids = {item['server_id'] for item in existing_assignments.data} if existing_assignments.data else set()
+            existing_assignments_map = {}
+            if existing_assignments.data:
+                existing_assignments_map = {
+                    str(item['server_id']): item for item in existing_assignments.data
+                }
 
-            # Filter out servers that are already assigned to prevent duplicates
-            new_server_ids = [server_id for server_id in request.server_ids
-                            if str(server_id) not in existing_server_ids]
+            updates_made = False
 
-            if not new_server_ids:
-                logger.info(f"All requested servers already assigned to stack {stack_id}")
-                return stack
+            if request.tool_permissions:
+                for raw_server_id, permissions in request.tool_permissions.items():
+                    server_id_str = str(raw_server_id)
+                    if server_id_str in existing_assignments_map:
+                        await self.db.table('stack_server_assignments')\
+                            .update({'tool_permissions': permissions})\
+                            .eq('stack_id', str(stack_id))\
+                            .eq('server_id', server_id_str)\
+                            .execute()
+                        updates_made = True
 
-            # Add only new assignments
-            await self._assign_servers_to_stack(
-                stack_id, new_server_ids, user_id, request.tool_permissions
-            )
+            existing_server_ids = set(existing_assignments_map.keys())
 
-            # Get updated stack
-            updated_stack = await self.get_stack_with_servers(stack_id, user_id)
+            new_server_ids = [
+                server_id for server_id in request.server_ids
+                if str(server_id) not in existing_server_ids
+            ]
 
-            # Notify clients
-            if self.ws_manager:
-                await self.ws_manager.broadcast_to_user(
-                    user_id,
-                    {
-                        'type': 'stack_servers_updated',
-                        'stack': {
-                            'id': str(stack_id),
-                            'name': updated_stack.name,
-                            'servers_count': len(updated_stack.servers),
-                            'tools_count': updated_stack.tools_count
-                        }
-                    }
+            updated_stack: Optional[MCPStackWithServers] = None
+
+            if new_server_ids:
+                await self._assign_servers_to_stack(
+                    stack_id, new_server_ids, user_id, request.tool_permissions
                 )
+                updated_stack = await self.get_stack_with_servers(stack_id, user_id)
+                updates_made = True
 
-            logger.info(f"Added {len(new_server_ids)} new servers to stack {stack_id} (skipped {len(request.server_ids) - len(new_server_ids)} duplicates)")
-            return updated_stack
+            if updates_made and not updated_stack:
+                updated_stack = await self.get_stack_with_servers(stack_id, user_id)
+
+            if updated_stack:
+                if self.ws_manager:
+                    await self.ws_manager.broadcast_to_user(
+                        user_id,
+                        {
+                            'type': 'stack_servers_updated',
+                            'stack': {
+                                'id': str(stack_id),
+                                'name': updated_stack.name,
+                                'servers_count': len(updated_stack.servers),
+                                'tools_count': updated_stack.tools_count
+                            }
+                        }
+                    )
+
+                if new_server_ids:
+                    logger.info(
+                        f"Added {len(new_server_ids)} new servers to stack {stack_id} (skipped {len(request.server_ids) - len(new_server_ids)} duplicates)"
+                    )
+                else:
+                    logger.info(f"Updated tool permissions for existing servers on stack {stack_id}")
+
+                return updated_stack
+
+            logger.info(f"All requested servers already assigned to stack {stack_id}")
+            return stack
 
         except Exception as e:
             logger.error(f"Failed to assign servers to stack: {e}")
@@ -744,7 +773,11 @@ class StackManager:
             for assignment in assignments_result.data:
                 server_data = assignment['mcp_servers']
                 if server_data:
-                    server_with_health = await self._build_server_with_health(server_data)
+                    server_permissions = assignment.get('tool_permissions') or {}
+                    server_payload = dict(server_data)
+                    server_payload['tool_permissions'] = server_permissions
+
+                    server_with_health = await self._build_server_with_health(server_payload)
                     servers.append(server_with_health)
                     total_tools += server_with_health.tools_count
 
