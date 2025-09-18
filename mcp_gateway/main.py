@@ -48,8 +48,10 @@ async def run_server():
     try:
         app = await create_application()
         
-        # Find available port starting from 8020
-        port = 8020
+        # Find available port starting from configured settings
+        from .config.settings import Settings
+        settings = Settings()
+        port = settings.gateway_port
         max_attempts = 10
         
         for attempt in range(max_attempts):
@@ -70,7 +72,7 @@ async def run_server():
                 logger.warning(f"Error testing port {port}: {e}")
                 port += 1
         
-        if port > 8020 + max_attempts:
+        if port > settings.gateway_port + max_attempts:
             raise RuntimeError(f"Could not find available port after {max_attempts} attempts")
         
         logger.info(f"Starting MCP Gateway on 0.0.0.0:{port}")

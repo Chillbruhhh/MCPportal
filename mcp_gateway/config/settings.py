@@ -59,7 +59,8 @@ class Settings(BaseSettings):
 
     # Gateway Configuration
     gateway_host: str = Field("0.0.0.0", description="Gateway host address")
-    gateway_port: int = Field(8020, description="Gateway port")
+    gateway_port: int = Field(8025, description="Gateway port")
+    serve_legacy_ui: bool = Field(False, description="Serve built-in legacy static HTML UI at / and /ui")
     log_level: str = Field("INFO", description="Logging level")
 
     # MCP Server Configuration
@@ -84,10 +85,18 @@ class Settings(BaseSettings):
     # Optional Database Configuration
     database_url: Optional[str] = Field(None, description="Database URL for persistence")
 
+    # Optional: Supabase / auth configuration (accepted but optional)
+    supabase_url: Optional[str] = Field(None, description="Supabase REST URL (e.g., https://<project>.supabase.co or .../rest/v1)")
+    supabase_anon_key: Optional[str] = Field(None, description="Supabase anon key")
+    supabase_service_role_key: Optional[str] = Field(None, description="Supabase service role key")
+    jwt_secret: Optional[str] = Field(None, description="JWT secret for auth token validation (optional)")
+    agent_token_secret: Optional[str] = Field(None, description="Secret for generating agent tokens (optional)")
+
     model_config = ConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=False
+        case_sensitive=False,
+        extra="allow"  # allow additional env vars without failing validation
     )
 
     @field_validator("mcp_servers")

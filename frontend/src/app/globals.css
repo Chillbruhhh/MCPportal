@@ -1,0 +1,374 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+@layer base {
+  :root {
+    /* Light mode - Clean white/black theme */
+    --background: 0 0% 100%;          /* Pure white */
+    --foreground: 0 0% 0%;             /* Pure black */
+    --card: 0 0% 100%;                 /* White cards */
+    --card-foreground: 0 0% 0%;        /* Black text on cards */
+    --popover: 0 0% 100%;              /* White popovers */
+    --popover-foreground: 0 0% 0%;     /* Black text */
+    --primary: 211 100% 50%;           /* Bright blue */
+    --primary-foreground: 0 0% 100%;   /* White on primary */
+    --secondary: 0 0% 96%;             /* Light gray */
+    --secondary-foreground: 0 0% 0%;   /* Black text */
+    --muted: 0 0% 96%;                 /* Light gray for muted */
+    --muted-foreground: 0 0% 40%;      /* Dark gray text */
+    --accent: 0 0% 96%;                /* Light gray accent */
+    --accent-foreground: 0 0% 0%;      /* Black text */
+    --destructive: 0 84.2% 60.2%;      /* Red */
+    --destructive-foreground: 0 0% 100%; /* White text */
+    --border: 0 0% 90%;                /* Light gray border */
+    --input: 0 0% 90%;                 /* Light gray input border */
+    --ring: 211 100% 50%;              /* Blue focus ring */
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    /* Dark mode - Black/grey theme */
+    --background: 0 0% 0%;             /* Pure black */
+    --foreground: 0 0% 95%;            /* Almost white */
+    --card: 0 0% 7%;                   /* Very dark gray cards */
+    --card-foreground: 0 0% 95%;       /* Almost white text */
+    --popover: 0 0% 7%;                /* Dark gray popovers */
+    --popover-foreground: 0 0% 95%;    /* Almost white text */
+    --primary: 211 100% 50%;           /* Bright blue */
+    --primary-foreground: 0 0% 0%;     /* Black on primary */
+    --secondary: 0 0% 15%;             /* Dark gray */
+    --secondary-foreground: 0 0% 95%;  /* Almost white text */
+    --muted: 0 0% 15%;                 /* Dark gray for muted */
+    --muted-foreground: 0 0% 60%;      /* Medium gray text */
+    --accent: 0 0% 15%;                /* Dark gray accent */
+    --accent-foreground: 0 0% 95%;     /* Almost white text */
+    --destructive: 0 62.8% 30.6%;      /* Dark red */
+    --destructive-foreground: 0 0% 95%; /* Almost white text */
+    --border: 0 0% 20%;                /* Dark gray border */
+    --input: 0 0% 20%;                 /* Dark gray input border */
+    --ring: 211 100% 50%;              /* Blue focus ring */
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    font-variation-settings: 'opsz' 32;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Remove default margins and padding */
+  h1, h2, h3, h4, h5, h6, p, ul, ol, li, figure, figcaption, blockquote, dl, dd {
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Enhanced typography */
+  h1 {
+    @apply text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight;
+  }
+
+  h2 {
+    @apply text-3xl md:text-4xl font-bold tracking-tight;
+  }
+
+  h3 {
+    @apply text-2xl md:text-3xl font-semibold tracking-tight;
+  }
+
+  h4 {
+    @apply text-xl md:text-2xl font-semibold;
+  }
+
+  h5 {
+    @apply text-lg md:text-xl font-medium;
+  }
+
+  h6 {
+    @apply text-base md:text-lg font-medium;
+  }
+
+  /* Links default without underline; style via utilities when needed */
+  a { @apply no-underline; }
+}
+
+@layer components {
+  /* Professional Button System */
+  .btn {
+    @apply inline-flex items-center justify-center rounded-xl font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary text-white shadow-md hover:shadow-lg active:scale-95 focus:ring-primary;
+  }
+
+  .btn-secondary {
+    @apply btn border-2 border-primary text-primary bg-transparent hover:bg-primary hover:text-white focus:ring-primary;
+  }
+
+  .btn-ghost {
+    @apply btn text-primary hover:bg-accent dark:hover:bg-accent/50 focus:ring-primary;
+  }
+
+  .btn-sm {
+    @apply px-4 py-2 text-sm;
+  }
+
+  .btn-md {
+    @apply px-6 py-3 text-base;
+  }
+
+  .btn-lg {
+    @apply px-8 py-4 text-lg;
+  }
+
+  /* Professional Card System */
+  .card {
+    @apply bg-card border border-border rounded-2xl transition-all duration-300;
+  }
+
+  .card-basic {
+    @apply card p-6 shadow-sm hover:shadow-md;
+  }
+
+  /* Scrollbar styling that blends with portal theme */
+  .scrollbar-primary {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--primary) / 0.35) transparent;
+  }
+  .scrollbar-primary::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-primary::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-primary::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--primary) / 0.35);
+    border-radius: 9999px;
+  }
+  .scrollbar-primary::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--primary) / 0.5);
+  }
+  .scrollbar-primary::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  .card-elevated {
+    @apply card p-8 shadow-glass hover:shadow-glass-lg;
+  }
+
+  .card-portal {
+    @apply card p-6 shadow-md hover:shadow-lg border-border;
+  }
+
+  /* Glass Morphism Effect */
+  .glass {
+    @apply backdrop-blur-xl bg-white/10 dark:bg-white/5 border border-white/20 dark:border-white/10;
+  }
+
+  .glass-strong {
+    @apply backdrop-blur-2xl bg-white/20 dark:bg-white/10 border border-white/30 dark:border-white/20;
+  }
+
+  /* Input System */
+  .input {
+    @apply w-full px-4 py-3 rounded-xl border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200;
+  }
+
+  /* Navigation */
+  .nav-item {
+    @apply flex items-center gap-3 px-4 py-3 rounded-xl text-muted-foreground hover:text-foreground hover:bg-accent transition-all duration-200;
+  }
+
+  .nav-item.active {
+    @apply text-primary bg-accent/30 dark:bg-accent/20 shadow-md;
+  }
+
+  /* Portal Logo Container */
+  .portal-logo {
+    @apply relative inline-flex items-center justify-center;
+  }
+
+  /* Subtle primary glow utility for circular logos */
+  .logo-glow {
+    position: relative;
+  }
+  .logo-glow::before {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border-radius: 9999px;
+    background: radial-gradient(circle at center, hsl(var(--primary) / 0.35) 0%, transparent 65%);
+    filter: blur(8px);
+    opacity: 0.7;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Pulsing glow behind circular logos (no ring) */
+  .logo-pulse-glow {
+    position: relative;
+  }
+  .logo-pulse-glow::after {
+    content: '';
+    position: absolute;
+    inset: -10px; /* extend beyond circle */
+    border-radius: 9999px;
+    background: radial-gradient(
+      circle at center,
+      hsl(var(--primary) / 0.30) 0%,
+      hsl(var(--primary) / 0.18) 35%,
+      transparent 70%
+    );
+    filter: blur(14px);
+    opacity: 0.7;
+    animation: logo-glow-pulse 3.2s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  @keyframes logo-glow-pulse {
+    0% { transform: scale(0.96); opacity: 0.55; }
+    50% { transform: scale(1.04); opacity: 0.85; }
+    100% { transform: scale(0.96); opacity: 0.55; }
+  }
+
+  /* Shimmer Effect */
+  .shimmer {
+    @apply relative overflow-hidden;
+  }
+
+  .shimmer::before {
+    @apply absolute inset-0 -translate-x-full bg-shimmer animate-shimmer;
+    content: '';
+  }
+
+  /* Enhanced Portal Animations */
+  .portal-main {
+    animation: portal-spin 30s linear infinite, portal-pulse 4s ease-in-out infinite;
+    transform-origin: center;
+  }
+
+  .portal-particle {
+    @apply absolute opacity-0 pointer-events-none;
+    animation: portal-particle 8s linear infinite;
+  }
+
+  /* Section Spacing */
+  .section {
+    @apply py-16 md:py-24 lg:py-32;
+  }
+
+  .section-sm {
+    @apply py-12 md:py-16 lg:py-20;
+  }
+
+  /* Container */
+  .container-custom {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  /* Feature Grid */
+  .feature-grid {
+    @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8;
+  }
+
+  /* Theme transitions */
+  .theme-transition {
+    @apply transition-colors duration-300;
+  }
+
+  .theme-transition * {
+    @apply transition-colors duration-300;
+  }
+}
+
+@layer utilities {
+  /* Text utilities */
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .text-gradient {
+    @apply bg-gradient-to-r from-primary to-primary bg-clip-text text-transparent;
+  }
+
+  .text-gradient-subtle {
+    @apply bg-gradient-to-r from-primary to-primary bg-clip-text text-transparent;
+  }
+
+  /* Interactive utilities */
+  .interactive {
+    @apply transition-all duration-200 hover:scale-105 active:scale-95;
+  }
+
+  .interactive-subtle {
+    @apply transition-all duration-200 hover:scale-[1.02] active:scale-98;
+  }
+
+  /* Glow effects */
+  .glow {
+    @apply shadow-md;
+  }
+
+  .glow-strong {
+    @apply shadow-lg;
+  }
+
+  .glow-hover {
+    @apply hover:shadow-lg transition-shadow duration-300;
+  }
+
+  /* Background patterns */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, rgba(59, 130, 246, 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(59, 130, 246, 0.05) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  .bg-dots {
+    background-image: radial-gradient(circle, rgba(59, 130, 246, 0.1) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  /* Portal specific utilities */
+  .portal-border {
+    @apply border border-border;
+  }
+
+  .portal-bg {
+    @apply bg-primary;
+  }
+
+  .portal-bg-subtle {
+    @apply bg-accent;
+  }
+
+  /* Animation delays */
+  .delay-100 {
+    animation-delay: 100ms;
+  }
+
+  .delay-200 {
+    animation-delay: 200ms;
+  }
+
+  .delay-300 {
+    animation-delay: 300ms;
+  }
+
+  .delay-500 {
+    animation-delay: 500ms;
+  }
+}

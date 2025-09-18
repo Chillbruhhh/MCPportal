@@ -1,5 +1,7 @@
 # Context Engineering Template files to ignore (from coleam00/context-engineering-intro)
 CLAUDE.md
+AGENTS.md
+.kiro/
 INITIAL_EXAMPLE.md
 INITIAL.md
 examples/

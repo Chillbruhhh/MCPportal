@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 import json
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -22,6 +22,11 @@ from ..config.settings import Settings
 from ..core.gateway import MCPGateway
 from ..ui.sse import create_event_stream, sse_manager, start_periodic_updates
 from ..mcp_server import get_gateway_server
+from ..db.client import get_database_client
+from ..core.agent_manager import AgentManager
+from ..core.stack_manager import StackManager
+from .agent_routes import router as agent_router, init_agent_routes
+from .stack_routes import router as stack_router, init_stack_routes
 
 logger = logging.getLogger(__name__)
 
@@ -319,6 +324,14 @@ async def lifespan(app: FastAPI):
         if gateway:
             await gateway.stop()
 
+        # Close database client if present
+        try:
+            db_client = getattr(app.state, "db", None)
+            if db_client and hasattr(db_client, "aclose"):
+                await db_client.aclose()
+        except Exception as e:
+            logger.warning(f"Error closing database client: {e}")
+
         logger.info("MCP Gateway application shutdown complete")
 
 
@@ -350,6 +363,16 @@ def create_app(gateway: MCPGateway, settings: Settings) -> FastAPI:
 
     # Setup middleware
     setup_middleware(app)
+
+    # Initialize database client (Supabase if configured, else null dev client)
+    db_client = get_database_client(settings)
+    app.state.db = db_client
+
+    # Initialize managers and route dependencies
+    agent_mgr = AgentManager(database_client=db_client)
+    stack_mgr = StackManager(database_client=db_client, mcp_gateway=gateway)
+    init_agent_routes(agent_mgr, gateway)
+    init_stack_routes(stack_mgr)
 
     # Add nested SSE endpoints (for MCP Portal compatibility)
     @app.get("/sse/sse")
@@ -539,59 +562,51 @@ def create_app(gateway: MCPGateway, settings: Settings) -> FastAPI:
 
     # Include API routes (FastMCP SSE endpoint is included in these routes)
     app.include_router(api_router, prefix="/api/v1")
+    # Include agents/stacks routers (they already include /api/v1 in their prefixes)
+    app.include_router(agent_router)
+    logger.info(f"Including stack_router with {len(stack_router.routes)} routes")
+    app.include_router(stack_router)
 
-    # Static files
+    # Static / legacy UI (conditionally served)
     static_dir = Path(__file__).parent.parent / "ui" / "static"
-    if static_dir.exists():
-        app.mount("/static", StaticFiles(directory=static_dir), name="static")
-    else:
-        logger.warning(f"Static directory not found: {static_dir}")
-
-    # Assets directory for logos and other assets
     assets_dir = Path(__file__).parent.parent.parent / "assets"
-    if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
-    else:
-        logger.warning(f"Assets directory not found: {assets_dir}")
 
-    # Root endpoint
-    @app.get("/", response_class=HTMLResponse)
-    async def root():
-        """
-        Serve the management UI.
-
-        Returns:
-            HTML response with the management interface
-        """
-        html_file = static_dir / "index.html"
-
-        if html_file.exists():
-            return FileResponse(html_file)
+    if settings.serve_legacy_ui:
+        if static_dir.exists():
+            app.mount("/static", StaticFiles(directory=static_dir), name="static")
         else:
+            logger.warning(f"Static directory not found: {static_dir}")
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+        else:
+            logger.warning(f"Assets directory not found: {assets_dir}")
+
+        @app.get("/", response_class=HTMLResponse)
+        async def root():
+            html_file = static_dir / "index.html"
+            if html_file.exists():
+                return FileResponse(html_file)
             return HTMLResponse(
                 content="""
-                <html>
-                        <head><title>MCP Portal</title></head>
-    <body>
-    <h1>MCP Portal</h1>
-                        <p>Management UI not available</p>
-                        <p><a href="/api/docs">API Documentation</a></p>
-                    </body>
+                <html><head><title>MCP Portal</title></head>
+                <body>
+                  <h1>MCP Portal</h1>
+                  <p>Management UI not available</p>
+                  <p><a href="/api/docs">API Documentation</a></p>
+                </body>
                 </html>
                 """,
-                status_code=200
+                status_code=200,
             )
 
-    # UI endpoint
-    @app.get("/ui", response_class=HTMLResponse)
-    async def ui():
-        """
-        Serve the management UI (alternative endpoint).
-
-        Returns:
-            HTML response with the management interface
-        """
-        return await root()
+        @app.get("/ui", response_class=HTMLResponse)
+        async def ui():
+            return await root()
+    else:
+        # Minimal root when legacy UI is disabled
+        @app.get("/")
+        async def root_disabled():
+            return {"message": "MCP Gateway running", "docs": "/api/docs"}
 
     # Events endpoint
     @app.get("/api/v1/events")
@@ -607,6 +622,37 @@ def create_app(gateway: MCPGateway, settings: Settings) -> FastAPI:
             EventSourceResponse for SSE streaming
         """
         return await create_event_stream(request, gateway)
+
+    # Minimal dashboard WebSocket for dev to avoid 403s and support ping/metrics
+    @app.websocket("/ws/dashboard")
+    async def dashboard_ws(websocket: WebSocket):
+        await websocket.accept()
+        try:
+            while True:
+                try:
+                    data = await websocket.receive_text()
+                except WebSocketDisconnect:
+                    break
+                except Exception:
+                    continue
+
+                try:
+                    message = json.loads(data)
+                except Exception:
+                    message = {}
+
+                msg_type = message.get("type")
+                if msg_type == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+                elif msg_type == "request_metrics":
+                    metrics = gateway.get_metrics()
+                    await websocket.send_text(json.dumps({"type": "metrics_update", "metrics": metrics.model_dump()}))
+                # Ignore other message types for now
+        finally:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
 
     # Favicon endpoint
     @app.get("/favicon.ico")
