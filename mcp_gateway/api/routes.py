@@ -41,6 +41,53 @@ from .dependencies import get_gateway, get_rate_limited_gateway
 router = APIRouter(tags=["MCP Gateway API"])
 
 
+def _map_health_status(status: MCPServerStatus) -> str:
+    """Map internal server status to health status labels expected by the UI."""
+    status_map = {
+        MCPServerStatus.CONNECTED: "healthy",
+        MCPServerStatus.FAILED: "error",
+        MCPServerStatus.DISCONNECTED: "offline",
+    }
+    return status_map.get(status, "unknown")
+
+
+def _serialize_tool(server_name: str, tool: Any) -> Dict[str, Any]:
+    """Normalize tool metadata so the UI can display discovery details."""
+    if hasattr(tool, "model_dump"):
+        data = tool.model_dump()
+        data.setdefault("server_name", server_name)
+        if not data.get("prefixed_name"):
+            original = data.get("original_name") or data.get("name") or "unknown"
+            data["prefixed_name"] = f"{server_name}_{original}"
+        if not data.get("original_name") and data.get("name"):
+            data["original_name"] = data["name"]
+        if "parameters" not in data:
+            schema = data.get("inputSchema") or {}
+            data["parameters"] = schema
+        return data
+
+    if isinstance(tool, dict):
+        original = tool.get("original_name") or tool.get("name") or "unknown"
+        description = tool.get("description")
+        parameters = tool.get("parameters") or tool.get("inputSchema") or {}
+    else:
+        original = getattr(tool, "original_name", None) or getattr(tool, "name", "unknown")
+        description = getattr(tool, "description", None)
+        parameters = (
+            getattr(tool, "parameters", None)
+            or getattr(tool, "inputSchema", None)
+            or {}
+        )
+
+    return {
+        "original_name": original,
+        "prefixed_name": f"{server_name}_{original}",
+        "server_name": server_name,
+        "description": description,
+        "parameters": parameters,
+    }
+
+
 async def handle_mcp_message(message: dict, gateway_instance=None):
     """Handle MCP message and return response"""
     # For now, handle basic initialize and other common requests
@@ -326,8 +373,12 @@ async def list_servers(gateway: MCPGateway = Depends(get_rate_limited_gateway)) 
         # Get all servers from gateway (includes discovered servers)
         all_servers = gateway.get_servers()
         
+        aggregator = getattr(gateway, 'aggregator', None)
+
         # Convert to API format
         servers_list = []
+        server_configs = getattr(gateway, '_server_configs', {})
+
         for server in all_servers:
             server_dict = server.model_dump()
             # Map status to API format
@@ -339,12 +390,58 @@ async def list_servers(gateway: MCPGateway = Depends(get_rate_limited_gateway)) 
                 server_dict['status'] = 'disconnected'
             else:
                 server_dict['status'] = 'inactive'
-            
+
             # Add enabled field - use the server's enabled field
             server_dict['enabled'] = server.enabled
-            
+
+            # Derive health status expected by the dashboard widgets
+            server_dict['health_status'] = _map_health_status(server.status)
+
+            # Normalise server type so filtering works even for discovered servers
+            if not server_dict.get('server_type'):
+                source = (server_dict.get('source') or '').lower()
+                if source:
+                    server_dict['server_type'] = 'discovered'
+                elif server.url.startswith(('process://', 'stdio://')):
+                    server_dict['server_type'] = 'custom'
+                else:
+                    server_dict['server_type'] = 'marketplace' if 'marketplace' in source else 'custom'
+
+            # Populate discovery metadata so the UI can show tool chips and metrics
+            aggregated_tools = []
+            if aggregator:
+                if hasattr(aggregator, 'get_tools_for_server'):
+                    aggregated_tools = aggregator.get_tools_for_server(server.name)
+                elif hasattr(aggregator, 'get_tools_by_server'):
+                    aggregated_tools = aggregator.get_tools_by_server(server.name)
+
+            tools_payload = [_serialize_tool(server.name, tool) for tool in aggregated_tools]
+
+            if not tools_payload and server_dict.get('tools'):
+                tools_payload = [
+                    _serialize_tool(server.name, tool)
+                    for tool in server_dict.get('tools', [])
+                ]
+
+            server_dict['discovered_tools'] = tools_payload
+
+            if tools_payload:
+                server_dict['tools_count'] = len(tools_payload)
+            else:
+                server_dict['tools_count'] = (
+                    server_dict.get('tools_count')
+                    or len(server_dict.get('tools', []) or [])
+                    or 0
+                )
+
+            # Mark whether this server is managed in gateway configuration
+            managed_flag = getattr(server, 'is_managed', None)
+            if managed_flag is None:
+                managed_flag = server.name in server_configs
+            server_dict['is_managed'] = bool(managed_flag)
+
             servers_list.append(server_dict)
-        
+
         active_count = sum(1 for s in servers_list if s['status'] == 'active')
         inactive_count = sum(1 for s in servers_list if s['status'] == 'inactive')
         failed_count = sum(1 for s in servers_list if s['status'] == 'failed')

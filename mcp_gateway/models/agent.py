@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 from enum import Enum
 import uuid
 
+from .mcp import AggregatedTool
+
 
 class AgentType(str, Enum):
     """Supported agent types"""
@@ -110,6 +112,9 @@ class MCPServer(MCPServerBase):
     user_id: uuid.UUID = Field(..., description="Owner user ID")
     health_status: HealthStatus = Field(default=HealthStatus.UNKNOWN, description="Current health status")
     last_health_check: Optional[datetime] = Field(None, description="Last health check timestamp")
+    enabled: bool = Field(default=True, description="Whether the server is enabled in the gateway")
+    source: Optional[str] = Field(None, description="Origin information for the server")
+    last_ping: Optional[datetime] = Field(None, description="Most recent successful ping time")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
     updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp")
 
@@ -214,6 +219,11 @@ class MCPServerWithHealth(MCPServer):
         default_factory=dict,
         description="Stack-specific tool enablement toggles"
     )
+    discovered_tools: List[AggregatedTool] = Field(
+        default_factory=list,
+        description="Tools discovered via gateway aggregation"
+    )
+    is_managed: bool = Field(default=True, description="Whether this server is persisted in the database")
 
 
 class MCPStackWithServers(MCPStack):

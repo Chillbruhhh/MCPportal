@@ -312,6 +312,16 @@ class MCPAggregator:
         """
         return list(self._aggregated_tools.values())
 
+    def get_tools_for_server(self, server_name: str) -> List[AggregatedTool]:
+        """Return aggregated tools for a specific server."""
+        if not server_name:
+            return []
+        return [
+            tool
+            for tool in self._aggregated_tools.values()
+            if tool.server_name == server_name
+        ]
+
     def get_all_resources(self) -> List[AggregatedResource]:
         """
         Get all aggregated resources.

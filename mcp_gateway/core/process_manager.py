@@ -253,7 +253,8 @@ class MCPProcessManager:
                 last_error=None,
                 retry_count=0,
                 max_retries=config.max_retries,
-                source=f"{config.source} ({mcp_process.framework})" if config.source else mcp_process.framework
+                source=f"{config.source} ({mcp_process.framework})" if config.source else mcp_process.framework,
+                enabled=True
             )
             
             logger.info(f"Started {mcp_process.framework} stdio server: {config.name} with {len(tools)} tools")
@@ -293,7 +294,8 @@ class MCPProcessManager:
                 last_error=None,
                 retry_count=0,
                 max_retries=config.max_retries,
-                source=f"{config.source} ({mcp_process.framework})" if config.source else f"SSE ({mcp_process.framework})"
+                source=f"{config.source} ({mcp_process.framework})" if config.source else f"SSE ({mcp_process.framework})",
+                enabled=True
             )
             
             logger.info(f"Connected to {mcp_process.framework} SSE server: {config.name} at {config.url} with {len(tools)} tools")

@@ -1,10 +1,26 @@
 'use client'
 
 import React, { useState, useMemo } from 'react'
-import { FaServer, FaPlus, FaPenToSquare, FaTrash, FaGear, FaHeartPulse, FaEllipsisVertical, FaTriangleExclamation, FaCircleCheck, FaClock, FaQuestion } from 'react-icons/fa6'
+import {
+  FaServer,
+  FaPlus,
+  FaPenToSquare,
+  FaTrash,
+  FaGear,
+  FaHeartPulse,
+  FaEllipsisVertical,
+  FaTriangleExclamation,
+  FaCircleCheck,
+  FaClock,
+  FaQuestion,
+  FaPlay,
+  FaPause,
+} from 'react-icons/fa6'
+import { FaTools } from 'react-icons/fa'
 import { useServers, useServerStats, useServerHealth, useServerFilters } from '@/hooks/useServers'
 import { useDashboardWebSocket } from '@/hooks/useWebSocket'
 import type { MCPServer, CreateServerRequest, UpdateServerRequest } from '@/lib/api'
+import { toast } from 'react-hot-toast'
 import { formatDistanceToNow } from 'date-fns'
 
 interface CreateServerModalProps {
@@ -296,7 +312,7 @@ export default function ServersView() {
   }, [servers, searchQuery, filterType, filterHealth, searchServers, filterByType, filterByHealth])
 
   const getHealthStatusIcon = (status: string) => {
-    switch (status) {
+    switch ((status || '').toLowerCase()) {
       case 'healthy':
         return <FaCircleCheck className="w-3 h-3 text-green-600" />
       case 'error':
@@ -309,7 +325,7 @@ export default function ServersView() {
   }
 
   const getHealthStatusColor = (status: string) => {
-    switch (status) {
+    switch ((status || '').toLowerCase()) {
       case 'healthy':
         return 'bg-green-100 text-green-700'
       case 'error':
@@ -322,7 +338,7 @@ export default function ServersView() {
   }
 
   const getServerTypeColor = (type: string) => {
-    switch (type) {
+    switch ((type || '').toLowerCase()) {
       case 'discovered':
         return 'bg-blue-100 text-blue-700'
       case 'custom':
@@ -344,8 +360,24 @@ export default function ServersView() {
     }
   }
 
-  const handleTestHealth = async (serverId: string) => {
-    await testServerHealth(serverId)
+  const handleTestHealth = async (server: MCPServer) => {
+    if (server.is_managed === false) {
+      toast.error('Health checks are unavailable for unmanaged/discovered servers')
+      return
+    }
+
+    if (!server.id) {
+      toast.error('Unable to run health check: missing server identifier')
+      return
+    }
+
+    const isUuidLike = /^[0-9a-fA-F-]{32,36}$/.test(String(server.id))
+    if (!isUuidLike) {
+      toast.error('Unable to run health check: invalid server identifier')
+      return
+    }
+
+    await testServerHealth(server.id)
   }
 
   const handleTestAllHealth = async () => {
@@ -353,11 +385,52 @@ export default function ServersView() {
   }
 
   const handleToggleServer = async (server: MCPServer) => {
-    if (server.enabled) {
+    if (server.is_managed === false) {
+      toast.error('Enable this server from the gateway configuration to manage it here')
+      return
+    }
+
+    if (!server.name) {
+      toast.error('Unable to toggle server: missing server name')
+      return
+    }
+
+    if (server.enabled !== false) {
       await disableServer(server.name)
     } else {
       await enableServer(server.name)
     }
+  }
+
+  const getServerTools = (server: MCPServer) => {
+    if (process.env.NODE_ENV === 'development') {
+      console.debug('Server data for tools', server.name, server.discovered_tools)
+    }
+    if (Array.isArray(server.discovered_tools) && server.discovered_tools.length > 0) {
+      return server.discovered_tools.map((tool: any) => {
+        const original = tool.original_name ?? tool.name ?? 'unknown'
+        const prefixed = tool.prefixed_name ?? tool.name ?? original
+        return {
+          key: original,
+          label: prefixed,
+          description: tool.description as string | undefined,
+          prefixedName: prefixed,
+        }
+      })
+    }
+
+    if (server.tools_config && typeof server.tools_config === 'object') {
+      return Object.entries(server.tools_config).map(([name, definition]) => ({
+        key: name,
+        label: name,
+        description:
+          definition && typeof definition === 'object' && 'description' in definition
+            ? String((definition as any).description)
+            : undefined,
+      }))
+    }
+
+    return []
   }
 
   if (isLoading) {
@@ -551,15 +624,28 @@ export default function ServersView() {
                   <span className="text-muted-foreground">Tools:</span>
                   <span className="flex items-center gap-1">
                     <FaGear className="w-3 h-3" />
-                    {server.tools_count || 0}
+                    {Array.isArray(server.discovered_tools)
+                      ? server.discovered_tools.length
+                      : server.tools_count || 0}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Transport:</span>
-                  <span className="text-xs px-2 py-1 rounded bg-gray-100">
-                    {server.transport || 'Unknown'}
+                  <span className="text-muted-foreground">Status:</span>
+                  <span className={`text-xs px-2 py-1 rounded ${server.enabled !== false ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-700'}`}>
+                    {server.enabled !== false ? 'Enabled' : 'Disabled'}
                   </span>
                 </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Source:</span>
+                  <span className="text-xs px-2 py-1 rounded bg-gray-100">
+                    {server.source || server.server_type || 'Unknown'}
+                  </span>
+                </div>
+                {server.is_managed === false && (
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Gateway discovered – manage via IDE configuration
+                  </div>
+                )}
                 {server.last_health_check && (
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Last Check:</span>
@@ -568,25 +654,82 @@ export default function ServersView() {
                     </span>
                   </div>
                 )}
+                {server.last_ping && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Last Ping:</span>
+                    <span className="text-xs">
+                      {formatDistanceToNow(new Date(server.last_ping), { addSuffix: true })}
+                    </span>
+                  </div>
+                )}
+                {server.last_error && (
+                  <div className="text-xs text-red-600 mt-2">
+                    {server.last_error}
+                  </div>
+                )}
+                <div className="mt-3">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
+                    <FaTools className="w-3 h-3" />
+                    Tool Discovery
+                  </div>
+                  {(() => {
+                    const tools = getServerTools(server)
+                    if (tools.length === 0) {
+                      return (
+                        <div className="mt-2 text-xs text-muted-foreground">
+                          No tools reported yet.
+                        </div>
+                      )
+                    }
+
+                    return (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {tools.slice(0, 6).map((tool) => (
+                          <span
+                            key={`${server.id ?? server.name}-${tool.key}`}
+                            className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs text-foreground"
+                            title={tool.description || tool.label}
+                          >
+                            {tool.label}
+                          </span>
+                        ))}
+                        {tools.length > 6 && (
+                          <span className="inline-flex rounded-md bg-muted px-2 py-1 text-xs text-foreground">
+                            +{tools.length - 6} more
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })()}
+                </div>
               </div>
 
               <div className="flex justify-between items-center mt-4 pt-3 border-t">
                 <div className="flex gap-1">
                   <button
-                    onClick={() => handleTestHealth(server.id)}
-                    className="text-xs px-2 py-1 rounded-md bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
+                    onClick={() => handleTestHealth(server)}
+                    className="text-xs px-2 py-1 rounded-md bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors disabled:opacity-60"
+                    disabled={server.is_managed === false}
                   >
                     Test Health
                   </button>
                   <button
                     onClick={() => handleToggleServer(server)}
-                    className={`text-xs px-2 py-1 rounded-md transition-colors ${
-                      server.enabled
+                    className={`text-xs px-2 py-1 rounded-md transition-colors flex items-center gap-1 ${
+                      server.enabled !== false
                         ? 'bg-red-100 text-red-700 hover:bg-red-200'
                         : 'bg-green-100 text-green-700 hover:bg-green-200'
                     }`}
                   >
-                    {server.enabled ? 'Disable' : 'Enable'}
+                    {server.enabled !== false ? (
+                      <>
+                        <FaPause className="w-3 h-3" /> Disable
+                      </>
+                    ) : (
+                      <>
+                        <FaPlay className="w-3 h-3" /> Enable
+                      </>
+                    )}
                   </button>
                 </div>
                 <div className="flex gap-1">

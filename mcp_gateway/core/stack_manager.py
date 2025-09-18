@@ -7,7 +7,8 @@ import asyncio
 import json
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5, NAMESPACE_URL
+from collections import defaultdict
 import logging
 
 from ..models.agent import (
@@ -18,6 +19,7 @@ from ..models.agent import (
     STACK_TEMPLATES, StackTemplate,
     ServerType, HealthStatus
 )
+from ..models.mcp import AggregatedTool
 
 logger = logging.getLogger(__name__)
 
@@ -471,20 +473,137 @@ class StackManager:
             raise
 
     async def get_user_servers(self, user_id: UUID) -> List[MCPServerWithHealth]:
-        """Get all servers for a user"""
+        """Get all servers for a user including live gateway servers."""
         try:
-            # Get servers
+            live_servers: Dict[str, MCPServer] = {}
+            live_tools: Dict[str, List[Any]] = {}
+            aggregated_tools: Dict[str, List[AggregatedTool]] = defaultdict(list)
+            server_ids_by_name: Dict[str, UUID] = {}
+
+            if self.gateway:
+                try:
+                    gateway_servers = self.gateway.get_servers()
+                    live_servers = {server.name: server for server in gateway_servers}
+                    server_ids_by_name = {
+                        server.name: getattr(server, 'id', None)
+                        for server in gateway_servers
+                        if getattr(server, 'id', None) is not None
+                    }
+                except Exception as gateway_error:
+                    logger.debug(f"Unable to load gateway servers: {gateway_error}")
+
+                try:
+                    processes = getattr(self.gateway, 'process_manager', None)
+                    if processes:
+                        logger.debug("Process manager has servers: %s", list(processes.processes.keys()))
+                        for name, process in processes.processes.items():
+                            if process.tools:
+                                live_tools[name] = process.tools
+                except Exception as process_error:
+                    logger.debug(f"Unable to load process manager tools: {process_error}")
+
+                try:
+                    for tool in self.gateway.aggregator.get_all_tools():
+                        aggregated_tools[tool.server_name].append(tool)
+                except Exception as agg_error:
+                    logger.debug(f"Unable to read aggregated tools: {agg_error}")
+
             servers_result = await self.db.table('mcp_servers')\
                 .select('*')\
                 .eq('user_id', str(user_id))\
                 .order('created_at', desc=True)\
                 .execute()
 
-            servers_with_health = []
+            servers_with_health: List[MCPServerWithHealth] = []
 
             for server_data in servers_result.data:
-                server_with_health = await self._build_server_with_health(server_data)
+                base_model = await self._build_server_with_health(server_data)
+                payload = base_model.model_dump(mode='python')
+                payload['is_managed'] = True
+
+                live_server = live_servers.pop(base_model.name, None)
+                if live_server:
+                    payload.update({
+                        'health_status': self._map_mcp_status_to_health(live_server.status),
+                        'last_health_check': datetime.utcnow(),
+                        'enabled': getattr(live_server, 'enabled', True),
+                        'last_ping': getattr(live_server, 'last_ping', None),
+                        'source': getattr(live_server, 'source', None),
+                    })
+
+                    server_id = server_ids_by_name.get(base_model.name)
+                    if server_id:
+                        payload['id'] = server_id
+
+                tools_candidates: List[Any] = []
+                if live_server and live_server.name in live_tools:
+                    tools_candidates = live_tools[live_server.name]
+                elif aggregated_tools.get(base_model.name):
+                    tools_candidates = aggregated_tools[base_model.name]
+
+                if tools_candidates:
+                    payload['discovered_tools'] = [
+                        tool.model_dump() if hasattr(tool, 'model_dump') else getattr(tool, '__dict__', tool)
+                        for tool in tools_candidates
+                    ]
+                    payload['tools_count'] = len(tools_candidates)
+
+                server_with_health = MCPServerWithHealth(**payload)
                 servers_with_health.append(server_with_health)
+
+            if self.gateway:
+                for server_name, live_server in live_servers.items():
+                    try:
+                        tools_candidates: List[Any] = []
+                        if server_name in live_tools:
+                            tools_candidates = live_tools[server_name]
+                        elif aggregated_tools.get(server_name):
+                            tools_candidates = aggregated_tools[server_name]
+
+                        tools_payload = [
+                            tool.model_dump() if hasattr(tool, 'model_dump') else tool
+                            for tool in tools_candidates
+                        ]
+
+                        deterministic_id = uuid5(NAMESPACE_URL, f"synthetic-server:{server_name}")
+                        now_ts = datetime.utcnow()
+
+                        synthetic_server = MCPServerWithHealth(
+                            id=str(deterministic_id),
+                            user_id=str(user_id),
+                            name=live_server.name,
+                            description=getattr(live_server, 'description', None),
+                            server_type=ServerType.DISCOVERED,
+                            connection_config={'url': live_server.url},
+                            tools_config={},
+                            tools_count=len(tools_payload),
+                            health_status=self._map_mcp_status_to_health(live_server.status),
+                            last_health_check=now_ts,
+                            icon_url=getattr(live_server, 'icon_url', None),
+                            documentation_url=getattr(live_server, 'documentation_url', None),
+                            last_error=live_server.last_error,
+                            created_at=now_ts,
+                            updated_at=now_ts,
+                            tool_permissions={},
+                            discovered_tools=tools_payload,
+                            enabled=getattr(live_server, 'enabled', True),
+                            is_managed=False,
+                        )
+
+                        logger.debug(
+                            "Synthetic server %s has %d live tools",
+                            synthetic_server.name,
+                            synthetic_server.tools_count,
+                        )
+
+                        if getattr(live_server, 'last_ping', None):
+                            synthetic_server.last_ping = getattr(live_server, 'last_ping')
+                        if getattr(live_server, 'source', None):
+                            synthetic_server.source = getattr(live_server, 'source')
+
+                        servers_with_health.append(synthetic_server)
+                    except Exception as build_error:
+                        logger.debug(f"Failed to build synthetic server for {server_name}: {build_error}")
 
             return servers_with_health
 
@@ -761,6 +880,13 @@ class StackManager:
     async def _build_stack_with_servers(self, stack_data: Dict[str, Any]) -> MCPStackWithServers:
         """Build MCPStackWithServers from database data"""
         try:
+            # Ensure gateway aggregation is up-to-date so discovered tools are available
+            if self.gateway:
+                try:
+                    await self.gateway.aggregator.update_aggregation(self.gateway.get_servers())
+                except Exception as agg_error:
+                    logger.debug(f"Aggregation refresh failed before building stack: {agg_error}")
+
             # Get assigned servers
             assignments_result = await self.db.table('stack_server_assignments')\
                 .select('*, mcp_servers(*)')\
@@ -804,19 +930,43 @@ class StackManager:
                 # Could store last error in a separate field or derive from logs
                 last_error = "Connection failed"
 
+            discovered_tools = []
+            try:
+                if self.gateway and server_data.get('name'):
+                    tools = self.gateway.aggregator.get_tools_for_server(server_data['name'])
+                    discovered_tools = [tool.model_dump() for tool in tools]
+            except Exception as agg_error:
+                logger.warning(f"Failed to fetch aggregated tools for server {server_data.get('name')}: {agg_error}")
+
+            if discovered_tools:
+                tools_count = len(discovered_tools)
+
             return MCPServerWithHealth(
                 **server_data,
                 tools_count=tools_count,
-                last_error=last_error
+                last_error=last_error,
+                discovered_tools=discovered_tools
             )
 
         except Exception as e:
             logger.error(f"Failed to build server with health: {e}")
             # Return basic server info even if health check fails
+            discovered_tools = []
+            if self.gateway and server_data.get('name'):
+                try:
+                    tools = self.gateway.aggregator.get_tools_for_server(server_data['name'])
+                    discovered_tools = [tool.model_dump() for tool in tools]
+                except Exception:
+                    pass
+
+            if discovered_tools:
+                tools_count = len(discovered_tools)
+
             return MCPServerWithHealth(
                 **server_data,
-                tools_count=0,
-                last_error=str(e)
+                tools_count=tools_count,
+                last_error=str(e),
+                discovered_tools=discovered_tools
             )
 
     async def _assign_servers_to_stack(

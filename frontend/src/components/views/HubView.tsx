@@ -171,7 +171,6 @@ export interface HubViewHandle {
 export default forwardRef<HubViewHandle, Record<string, never>>(function HubView(_, ref) {
   const reactFlowInstance = useReactFlow()
   const agentY = useRef(100)
-  const serverY = useRef(100)
   const dataSignatureRef = useRef<string | null>(null)
   const [isInitialized, setIsInitialized] = useState(false)
   const { save: persistGraphState, load: retrieveGraphState } = useGraphState()
@@ -332,7 +331,6 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
     if (!safeAgents.length && !safeStacks.length && !allSafeServers.length) {
       if (nodes.length || edges.length) {
         agentY.current = 100
-        serverY.current = 100
         setNodes([])
         setEdges([])
         saveState()
@@ -350,7 +348,6 @@ export default forwardRef<HubViewHandle, Record<string, never>>(function HubView
     console.log('\n🔄 Converting backend data to flow elements')
 
     agentY.current = 100
-    serverY.current = 100
 
     const newNodes: TypedNode[] = []
     const newEdges: Edge[] = []

@@ -218,16 +218,20 @@ export function useServer(serverId: string) {
 export function useServerStats() {
   const { servers } = useServers()
 
-  const healthyServers = servers.filter(s => s.health_status === 'healthy')
-  const errorServers = servers.filter(s => s.health_status === 'error')
-  const offlineServers = servers.filter(s => s.health_status === 'offline')
-  const unknownServers = servers.filter(s => s.health_status === 'unknown')
+  const healthyServers = servers.filter(s => (s.health_status ?? '').toLowerCase() === 'healthy')
+  const errorServers = servers.filter(s => (s.health_status ?? '').toLowerCase() === 'error')
+  const offlineServers = servers.filter(s => (s.health_status ?? '').toLowerCase() === 'offline')
+  const unknownServers = servers.filter(s => !['healthy', 'error', 'offline'].includes((s.health_status ?? '').toLowerCase()))
 
-  const discoveredServers = servers.filter(s => s.server_type === 'discovered')
-  const customServers = servers.filter(s => s.server_type === 'custom')
-  const marketplaceServers = servers.filter(s => s.server_type === 'marketplace')
+  const discoveredServers = servers.filter(s => (s.server_type ?? '').toLowerCase() === 'discovered')
+  const customServers = servers.filter(s => (s.server_type ?? '').toLowerCase() === 'custom')
+  const marketplaceServers = servers.filter(s => (s.server_type ?? '').toLowerCase() === 'marketplace')
 
-  const totalTools = servers.reduce((sum, server) => sum + (server.tools_count || 0), 0)
+  const totalTools = servers.reduce((sum, server) => {
+    const discoveredCount = Array.isArray(server.discovered_tools) ? server.discovered_tools.length : undefined
+    const fallback = server.tools_count || 0
+    return sum + (discoveredCount ?? fallback)
+  }, 0)
 
   const healthDistribution = {
     healthy: healthyServers.length,
@@ -244,8 +248,8 @@ export function useServerStats() {
 
   const stats = {
     total: servers.length,
-    totalTools,
-    avgToolsPerServer: servers.length > 0 ? totalTools / servers.length : 0,
+    totalTools: totalTools,
+    avgToolsPerServer: servers.length > 0 ? Number((totalTools / servers.length).toFixed(1)) : 0,
     healthDistribution,
     typeDistribution,
   }

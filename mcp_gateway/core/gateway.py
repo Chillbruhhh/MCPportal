@@ -234,13 +234,7 @@ class MCPGateway:
             )
 
         # Aggregate tools and resources
-        try:
-            tools = await self.aggregator.aggregate_tools(all_servers)
-            resources = await self.aggregator.aggregate_resources(all_servers)
-            
-            logger.info(f"Successfully aggregated {len(tools)} tools and {len(resources)} resources")
-        except Exception as e:
-            logger.error(f"Error aggregating tools and resources: {e}")
+        # tools/resources will be aggregated when servers are toggled (process_manager already has them)
 
         logger.info(
             f"Server initialization complete: {len(all_servers)} servers connected, "
@@ -741,11 +735,13 @@ class MCPGateway:
             if enabled:
                 # Enable server
                 server_config.enabled = True
-                
+
                 # Start the server if it's process-based
                 if server_config.command:
                     result = await self.process_manager.start_server(server_config)
                     if result:
+                        self._servers[server_name] = result
+                        self._servers[server_name].enabled = True
                         logger.info(f"Server '{server_name}' enabled and started successfully")
                         # Update aggregation
                         await self.aggregator.update_aggregation(list(self._servers.values()))
@@ -757,6 +753,10 @@ class MCPGateway:
                     # For URL-based servers, try to connect
                     success = await self.discovery.connect_to_server(server_name, server.url)
                     if success:
+                        updated = self.discovery.get_server(server_name)
+                        if updated:
+                            updated.enabled = True
+                            self._servers[server_name] = updated
                         logger.info(f"Server '{server_name}' enabled and connected successfully")
                         # Update aggregation
                         await self.aggregator.update_aggregation(list(self._servers.values()))
@@ -767,7 +767,7 @@ class MCPGateway:
             else:
                 # Disable server
                 server_config.enabled = False
-                
+
                 # Stop the server if it's process-based
                 if server_config.command:
                     await self.process_manager.stop_server(server_name)
@@ -776,10 +776,14 @@ class MCPGateway:
                     # For URL-based servers, disconnect
                     await self.discovery.disconnect_from_server(server_name)
                     logger.info(f"Server '{server_name}' disabled and disconnected")
-                
+
+                if server_name in self._servers:
+                    self._servers[server_name].enabled = False
+                    self._servers[server_name].status = MCPServerStatus.DISCONNECTED
+
                 # Update aggregation
                 await self.aggregator.update_aggregation(list(self._servers.values()))
-                
+
                 return True
             
         except Exception as e:

@@ -61,6 +61,33 @@ class TestAPIRoutes:
                 status=MCPServerStatus.FAILED
             )
         ]
+
+        # Aggregated tool metadata per server for discovery view
+        server1_tools = [
+            AggregatedTool(
+                original_name="read_file",
+                prefixed_name="server1_read_file",
+                server_name="server1",
+                description="Read file contents",
+                parameters={}
+            ),
+            AggregatedTool(
+                original_name="write_file",
+                prefixed_name="server1_write_file",
+                server_name="server1",
+                description="Write file contents",
+                parameters={}
+            )
+        ]
+
+        gateway.aggregator = Mock()
+        gateway._server_configs = {"server1": Mock()}
+
+        def _tools_for_server(name: str):
+            return server1_tools if name == "server1" else []
+
+        gateway.aggregator.get_tools_for_server.side_effect = _tools_for_server
+        gateway.aggregator.get_tools_by_server.side_effect = _tools_for_server
         
         # Mock tools
         gateway.get_aggregated_tools.return_value = [
@@ -147,6 +174,17 @@ class TestAPIRoutes:
         assert data["total"] == 2
         assert data["active"] == 1
         assert data["failed"] == 1
+        # Ensure discovery metadata is present for dashboard UI
+        server_names = {server["name"] for server in data["servers"]}
+        assert {"server1", "server2"} == server_names
+        first_server = next(server for server in data["servers"] if server["name"] == "server1")
+        assert first_server["health_status"] == "healthy"
+        assert first_server["tools_count"] == 2
+        assert len(first_server["discovered_tools"]) == 2
+        assert first_server["is_managed"] is True
+        second_server = next(server for server in data["servers"] if server["name"] == "server2")
+        assert second_server["tools_count"] == 0
+        assert second_server["is_managed"] is False
     
     def test_get_server_details(self, client, mock_gateway):
         """Test getting server details."""

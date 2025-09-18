@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { MCPServer, MCPStack } from '@/lib/api'
 import { useStacks } from '@/hooks/useStacks'
 import { toast } from 'react-hot-toast'
-import { FaChevronDown, FaChevronRight, FaLayerGroup, FaServer, FaTools } from 'react-icons/fa6'
+import { FaChevronDown, FaChevronRight, FaLayerGroup, FaServer } from 'react-icons/fa6'
+import { FaTools } from 'react-icons/fa'
 
 interface StackServerInspectorProps {
   stack: MCPStack | null
@@ -19,8 +19,10 @@ interface StackServerInspectorProps {
 type ToolPermissionMap = Record<string, Record<string, boolean>>
 
 type ToolConfigEntry = {
-  name: string
+  key: string
+  label: string
   description?: string
+  prefixedName?: string
 }
 
 const statusTone: Record<string, { dot: string; text: string }> = {
@@ -41,18 +43,27 @@ function normaliseServerId(server: MCPServer): string | null {
 }
 
 function extractToolConfig(server: MCPServer): ToolConfigEntry[] {
-  if (!server.tools_config || typeof server.tools_config !== 'object') {
-    return []
+  if (Array.isArray(server.discovered_tools) && server.discovered_tools.length > 0) {
+    return server.discovered_tools.map((tool) => ({
+      key: tool.original_name,
+      label: tool.prefixed_name || tool.original_name,
+      description: tool.description,
+      prefixedName: tool.prefixed_name,
+    }))
   }
 
-  return Object.entries(server.tools_config).map(([toolName, definition]) => {
-    const description =
-      definition && typeof definition === 'object' && 'description' in definition
-        ? String(definition.description)
-        : undefined
+  if (server.tools_config && typeof server.tools_config === 'object') {
+    return Object.entries(server.tools_config).map(([toolName, definition]) => {
+      const description =
+        definition && typeof definition === 'object' && 'description' in definition
+          ? String(definition.description)
+          : undefined
 
-    return { name: toolName, description }
-  })
+      return { key: toolName, label: toolName, description }
+    })
+  }
+
+  return []
 }
 
 function buildInitialPermissions(stack: MCPStack | null): ToolPermissionMap {
@@ -69,7 +80,7 @@ function buildInitialPermissions(stack: MCPStack | null): ToolPermissionMap {
     const merged: Record<string, boolean> = {}
 
     toolEntries.forEach((tool) => {
-      merged[tool.name] = existingPermissions[tool.name] ?? true
+      merged[tool.key] = existingPermissions[tool.key] ?? true
     })
 
     // Preserve any stored permissions even if the tool is not in tools_config anymore
@@ -101,9 +112,9 @@ export function StackServerInspector({ stack, open, onClose }: StackServerInspec
     }
   }, [open, stack])
 
-  const totalTools = useMemo(() => {
+const totalTools = useMemo(() => {
     if (!stack?.servers) return 0
-    return stack.servers.reduce((count, server) => count + (server.tools_count ?? 0), 0)
+    return stack.servers.reduce((count, server) => count + (server.discovered_tools?.length ?? server.tools_count ?? 0), 0)
   }, [stack])
 
   const handleRegisterTools = useCallback((serverId: string, toolNames: string[]) => {
@@ -185,7 +196,7 @@ export function StackServerInspector({ stack, open, onClose }: StackServerInspec
       const serverId = normaliseServerId(server)
       if (!serverId) return
 
-      const toolNames = extractToolConfig(server).map((tool) => tool.name)
+      const toolNames = extractToolConfig(server).map((tool) => tool.key)
       if (toolNames.length > 0) {
         handleRegisterTools(serverId, toolNames)
       }
@@ -219,7 +230,7 @@ export function StackServerInspector({ stack, open, onClose }: StackServerInspec
 
           <Separator />
 
-          <ScrollArea className="max-h-[48vh] pr-3">
+          <div className="max-h-[48vh] overflow-y-auto pr-3 scrollbar-primary">
             <div className="space-y-4">
               {stackServers.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-border bg-muted/30 p-8 text-center text-sm text-muted-foreground">
@@ -280,10 +291,10 @@ export function StackServerInspector({ stack, open, onClose }: StackServerInspec
                           ) : (
                             <div className="space-y-2">
                               {toolEntries.map((tool) => {
-                                const isEnabled = serverPermissions[tool.name] ?? true
+                                const isEnabled = serverPermissions[tool.key] ?? true
                                 return (
                                   <label
-                                    key={tool.name}
+                                    key={tool.key}
                                     className="flex items-start gap-3 rounded-lg border border-border bg-background p-3 hover:bg-muted"
                                   >
                                     <input
@@ -292,11 +303,18 @@ export function StackServerInspector({ stack, open, onClose }: StackServerInspec
                                       checked={isEnabled}
                                       disabled={isSaving}
                                       onChange={(event) =>
-                                        handleToggleTool(server, tool.name, event.target.checked)
+                                        handleToggleTool(server, tool.key, event.target.checked)
                                       }
                                     />
                                     <div className="flex-1">
-                                      <div className="text-sm font-medium text-foreground">{tool.name}</div>
+                                      <div className="text-sm font-medium text-foreground">
+                                        {tool.label}
+                                        {tool.prefixedName && tool.prefixedName !== tool.label && (
+                                          <span className="ml-2 text-xs text-muted-foreground">
+                                            {tool.prefixedName}
+                                          </span>
+                                        )}
+                                      </div>
                                       {tool.description && (
                                         <div className="text-xs text-muted-foreground">{tool.description}</div>
                                       )}
@@ -313,7 +331,7 @@ export function StackServerInspector({ stack, open, onClose }: StackServerInspec
                 })
               )}
             </div>
-          </ScrollArea>
+          </div>
 
           <div className="flex justify-end pt-2">
             <Button variant="outline" onClick={onClose}>

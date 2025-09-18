@@ -459,6 +459,10 @@ class MCPDiscovery:
         """
         return list(self._server_connections.values())
 
+    def get_server(self, server_name: str) -> Optional[MCPServer]:
+        """Retrieve a cached server connection by name."""
+        return self._server_connections.get(server_name)
+
     async def connect_to_server(self, server_name: str, server_url: str) -> bool:
         """
         Connect to a specific MCP server.
