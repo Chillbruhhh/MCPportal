@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme";
 import { Providers } from "@/components/providers";
+import { ResizeObserverFix } from "@/components/ResizeObserverFix";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -79,6 +80,7 @@ export default function RootLayout({
           enableSystem={true}
         >
           <Providers>
+            <ResizeObserverFix />
             {children}
           </Providers>
         </ThemeProvider>

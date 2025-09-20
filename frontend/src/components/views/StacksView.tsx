@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo } from 'react'
 import { FaLayerGroup, FaPlus, FaPenToSquare, FaTrash, FaServer, FaGear, FaRobot, FaEllipsisVertical } from 'react-icons/fa6'
+import { toast } from 'react-hot-toast'
 import { useStacks, useStackStats, useStackTemplates } from '@/hooks/useStacks'
 import { useServers } from '@/hooks/useServers'
 import { useDashboardWebSocket } from '@/hooks/useWebSocket'
@@ -132,12 +133,69 @@ function CreateStackModal({ isOpen, onClose, onCreateStack, onCreateFromTemplate
   )
 }
 
+interface RenameStackModalProps {
+  isOpen: boolean
+  stack: MCPStack | null
+  newName: string
+  onChange: (name: string) => void
+  onClose: () => void
+  onRename: () => Promise<void>
+  isRenaming: boolean
+}
+
+function RenameStackModal({ isOpen, stack, newName, onChange, onClose, onRename, isRenaming }: RenameStackModalProps) {
+  if (!isOpen || !stack) return null
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-background border rounded-lg shadow-lg w-full max-w-sm mx-4">
+        <div className="p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold">Rename Stack</h3>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground">×</button>
+          </div>
+          <div className="space-y-2">
+            <label className="block text-sm font-medium">New Name</label>
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => onChange(e.target.value)}
+              className="w-full px-3 py-2 border rounded-md bg-background"
+              placeholder="Stack name"
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={onClose}
+              className="px-3 py-1 text-sm border rounded-md hover:bg-accent"
+              disabled={isRenaming}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onRename}
+              className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
+              disabled={isRenaming || !newName.trim()}
+            >
+              {isRenaming ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function StacksView() {
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all')
   const [filterAssignment, setFilterAssignment] = useState<'all' | 'assigned' | 'unassigned'>('all')
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [selectedStack, setSelectedStack] = useState<MCPStack | null>(null)
+  const [renameStackState, setRenameStackState] = useState<MCPStack | null>(null)
+  const [renameName, setRenameName] = useState('')
+  const [isRenamingStack, setIsRenamingStack] = useState(false)
 
   // Hooks
   const {
@@ -433,7 +491,10 @@ export default function StacksView() {
                   </button>
                 </div>
                 <div className="flex gap-1">
-                  <button className="text-muted-foreground hover:text-foreground p-1">
+                  <button
+                    className="text-muted-foreground hover:text-foreground p-1"
+                    onClick={() => openRenameStack(stack)}
+                  >
                     <FaPenToSquare className="w-3 h-3" />
                   </button>
                   <button
@@ -457,6 +518,46 @@ export default function StacksView() {
         onCreateFromTemplate={handleCreateFromTemplate}
         templates={templates}
       />
+
+      <RenameStackModal
+        isOpen={!!renameStackState}
+        stack={renameStackState}
+        newName={renameName}
+        onChange={setRenameName}
+        onClose={() => {
+          setRenameStackState(null)
+          setRenameName('')
+        }}
+        onRename={handleRenameStack}
+        isRenaming={isRenamingStack}
+      />
     </div>
   )
 }
+  const openRenameStack = (stack: MCPStack) => {
+    setRenameStackState(stack)
+    setRenameName(stack.name)
+  }
+
+  const handleRenameStack = async () => {
+    if (!renameStackState) return
+    const trimmed = renameName.trim()
+    if (!trimmed) {
+      toast.error('Stack name is required')
+      return
+    }
+
+    setIsRenamingStack(true)
+    try {
+      await updateStack(renameStackState.id, { name: trimmed })
+      toast.success('Stack renamed')
+      setRenameStackState(null)
+      setRenameName('')
+      refreshStacks()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to rename stack'
+      toast.error(message)
+    } finally {
+      setIsRenamingStack(false)
+    }
+  }

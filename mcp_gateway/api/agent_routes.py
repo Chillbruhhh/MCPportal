@@ -61,7 +61,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     try:
         # Decode JWT and extract user_id
         # user_id = decode_supabase_jwt(credentials.credentials)
-        user_id = UUID("12345678-1234-5678-9012-123456789012")  # Mock for now
+        user_id = UUID("00000000-0000-0000-0000-000000000000")  # Mock for now
         return user_id
     except Exception as e:
         logger.error(f"Failed to validate user token: {e}")
